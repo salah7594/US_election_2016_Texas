@@ -1,0 +1,463 @@
+Election Américaine 2016, Etude du Texas
+
+Aux Etats-Unis, la course à la présidentielle 2016 pour succéder à Barack Obama à la Maison-Blanche a été remportée au soir du 8 novembre par le républicain Donald Trump face à sa rivale Hillary Clinton. Cette élection a été très serré et aussi très médiatisé. Nous allons tenter de comprendre cette élection à l'aide des dataset disponible en Open source (https://factfinder.census.gov/).
+
+Cas du Texas :
+- Résultats de l'élection par Comté ("County")
+- La moyenne des revenues par foyer par an en $
+- La couverture d'assurance maladie Homme/Femme
+- La répartition ethnique du Texas
+
+
+
+```{r}
+library(raster) # library to get map shape file
+library(ggplot2) # for plotting and miscellaneuous things
+library(ggmap) # for plotting
+library(scales) # to get nice looking legends
+library(maps) #contient de nombreuse cartes du monde
+library(fiftystater)
+library(stringr)#pour le str_pad ajout de chiffre
+library(plyr) # for merging datasets
+library(plotrix)# pourles graphes camembert "pie graph"
+library(ggthemes)# pour le coté esthétique des graphs
+
+
+if (!require(raster)) { 
+  install.packages("raster") 
+  require(raster)
+}
+if (!require(ggplot2)) { 
+  install.packages("ggplot2") 
+  require(ggplot2)
+}
+if (!require(ggmap)) { 
+  install.packages("ggmap") 
+  require(ggmap)
+}
+if (!require(plyr)) { 
+  install.packages("plyr") 
+  require(plyr)
+}
+if (!require(scales)) { 
+  install.packages("scales") 
+  require(scales)
+}
+if (!require(maps)) { 
+  install.packages("maps") 
+  require(maps)
+}
+if (!require(fiftystater)) { 
+  install.packages("fiftystater") 
+  require(fiftystater)
+}
+if (!require(stringr)) { 
+  install.packages("stringr") 
+  require(stringr)
+}
+if (!require(plotrix)) { 
+  install.packages("plotrix") 
+  require(plotrix)
+}
+if (!require(ggthemes)) { 
+  install.packages("ggthemes") 
+  require(ggthemes)
+}
+
+
+```
+
+
+```{r}
+usa.df <- map_data("county")# Pour avoir les forme des Comtés des USA
+county_df <- map_data("county")#Pour les bordures des counties
+state_df <- map_data("state")# Pour les bordures des états
+
+#lecture du fichier CSV contenant le nom des Etats
+us_states_name <- read.csv("DATA/US_ELECTION_2016/statelatlong.csv", header = T, sep = ",")
+us_states_name <- subset(us_states_name, State!="AK" & State!="HI")
+# Appercu de la carte des usa avec le nom des états
+a <- ggplot() + geom_polygon(data = state_df, aes(x = long, y = lat, group = group), color = "white", size = 0.15)+
+  geom_text(data = us_states_name, aes(x = Longitude, y = Latitude, label = us_states_name$State), color ="white",  size = 3)
+a
+```
+
+Nous commençons par établire la map des USA avec le nom des Etats 
+
+Puis nous allons nous intéresser plus particulièrement aux 3142 Comté des USA
+
+```{r}
+#Representation de la carte des usa par département ("County")
+b <- a <- ggplot() + geom_polygon(data = county_df, aes(x = long, y = lat, group = group), color = "white", size = 0.15)
+b
+```
+
+
+A l'aide du fichier US_ELECTION_2016/us-election-2016-results-by-county.csv,
+nous allons représenter les résultats de l'élection de chaque Comté.
+
+Il est à noté qu'il y avait plusieurs candidats (comme Gary Johnson: Libertarien, Evan McMullin: Indépendant, .) mais nous allons 2 candidats favoris de l'élection. 
+
+
+```{r}
+#On change le nom de la 6eme colonne
+colnames(usa.df)[6] <- "CountyName" # changing region to state value to match with the data.
+
+# Get the data to be plotted
+usa.dat <- read.table("DATA/US_ELECTION_2016/us-election-2016-results-by-county.csv", header = T, sep = ",") #reading the data from the csv file
+usa.dat$CountyName <- tolower(usa.dat$CountyName) #On met en minuscule
+Trump.dat <- usa.dat[usa.dat$Candidate == "Trump",] #on prend que les lignes de Trump
+Clint.dat <- usa.dat[usa.dat$Candidate == "Clinton",]# que les lignes de Clinton
+Trump.datVC <- Trump.dat[c("VoteCount")]#nombre de vote Trump
+colnames(Trump.datVC)[1] <- "Trump"  # On renome la colonne
+Clint.datVC <- Clint.dat[c("VoteCount")] #nombre de vote Cinton
+colnames(Clint.datVC)[1] <- "Clinton" #on renome la colonne Clinton
+
+#On selectionne les colonne intéressante
+usa.info <- Trump.dat[c("StateName","CountyName","CountyFips","CountyTotalVote")]
+
+usa.dat <- cbind(usa.info, Clint.datVC, Trump.datVC)
+
+#Fonction pour avoir un pourentage des resutats Trump/Clinton
+f <- function(x,y)
+{
+  z = (y / x) *100
+}
+
+#On utilise la fonction f pour avoir les % de Clinton
+usa.dat$ClintonPourcent <- mapply(f, as.numeric(as.character(usa.dat$CountyTotalVot)), as.numeric(as.character(usa.dat$Clinton)))
+
+#On utilise la fonction f pour avoir les % de Trump
+usa.dat$TrumpPourcent <- mapply(f, as.numeric(as.character(usa.dat$CountyTotalVot)), as.numeric(as.character(usa.dat$Trump)))
+
+
+#Fonction qui fait la difference des votes Clinton/Trump
+fu <- function(cl,tr)  
+{ 
+  c <-cl - tr
+}
+#On applique la fonction fu 
+usa.dat$newColumn <- mapply(fu, as.numeric(as.character(usa.dat$ClintonPourcent)), as.numeric(as.character(usa.dat$TrumpPourcent)))
+
+
+# Rassemble toute les données, Merge the data collected with the shape file
+usa.df <- join(usa.df, usa.dat, by = "CountyName", type = "inner")
+
+# Une fonction pou ploter
+p <- function(data, title) {
+  ggp <- ggplot() + 
+    #		Pour avoir les bordures des County
+    geom_polygon(data = data, aes(x = long, y = lat, group = group, fill = newColumn), color = "black", size = 0.15) + 
+    geom_polygon(data = state_df, aes(x = long, y = lat, group = group),colour = "black", fill = NA, size = 1) +
+    geom_polygon(data = county_df, aes(x = long, y = lat, group = group),colour = "black", fill = NA, size = 0.15) +
+    scale_fill_distiller(palette = "RdBu", breaks=c(-90,0,75),labels=c("Trump","=","Clinton"), trans = "reverse")+
+    theme_nothing(legend = TRUE) + labs(title = title, fill = "")
+ 
+  return(ggp)
+}
+
+
+figure.title <- "2016 USA presidential elections"
+p(usa.df, figure.title)
+
+```
+
+"Donald Trump est élu président avec une majorité de grands électeurs. Il n'a cependant obtenu qu'une minorité du vote populaire national, avec près de 2,9 millions de voix (2,1 % des suffrages exprimés) de moins que Hillary Clinton. Ce succès est rendu possible par le gain, avec une marge étroite, de trois États importants qui avaient voté démocrate depuis 1988 :
+- la Pennsylvanie (12,7 millions d'habitants), pris avec 44 292 voix d'avance 
+- le Wisconsin (5,7 millions d'habitants), pris avec 22 748 voix d'avance 
+- le Michigan (9,9 millions d'habitants), pris avec 10 704 voix d'avance."
+(Source: Wikipédia)
+
+
+Notre graph nous permet de savoir que le centre des USA à voté majoritairement en faveur de D.Trump, tandis que plus on s'éloigne du centre plus la candidate démocrate est majoritaire.
+
+Comme les USA est composé de nombreux Comtés nous allons nous concentrer sur l'États du Texas qui semble représenter un contraste intéressant :
+
+
+
+```{r}
+#On s'interresse plus particulierement a l'etats du Texas
+texas.df <- usa.df[usa.df$region=="texas",]
+ggp2 <- ggplot() + 
+    geom_polygon(data = texas.df, aes(x = long, y = lat, group = group, fill = newColumn), color = "black", size = 0.15) + 
+  scale_fill_distiller(palette = "RdBu", breaks=c(-90,0,70),labels=c("Trump","=","Clinton"), trans = "reverse")+
+  theme_nothing(legend = TRUE) + labs(title = "2016 Texas presidential elections", fill = "")
+ggp2
+```
+
+A l'aide de cette cartographie on observe que le sud du Texas est majoritairement en faveur de Clinton. Plus on se rapproche du Nord du Texas plus les votes pro-Trump s'affirme. On peut se demander : Pourquoi un tel contraste ? 
+
+On peut expliquer ce contraste en regardant les programmes des 2 candidats :
+D.Trump propose de construire un mur à la frontière Mexique/USA :
+«Le Mexique étant un des pays au monde où la criminalité est la plus forte, nous devons avoir LE MUR», a tweeté Donald Trump
+
+Cette déclaration affirmée à chaque meeting à surement influencé les votes.
+
+
+
+
+
+```{r}
+#On s'interesse au salaire moyen de la population par county
+all_earning.dat <- read.csv("DATA/EARNINGS_2015/ACS_15_5YR_S2001_with_ann.csv", header = T, sep = ",")
+
+#On elimine la 1er ligne qui contientd es caractere
+earning.dat <- all_earning.dat[-c(1),]
+earning <- earning.dat[c("GEO.id2", "HC01_EST_VC16","HC02_EST_VC02", "HC03_EST_VC02") ]
+#On indique que cette colonne a des donnees numeriques
+earning$HC01_EST_VC16 <- as.numeric(as.character(earning$HC01_EST_VC16))
+earning$HC02_EST_VC02 <- as.numeric(as.character(earning$HC02_EST_VC02))
+earning$HC03_EST_VC02 <- as.numeric(as.character(earning$HC03_EST_VC02))
+colnames(earning)[1] <- "CountyFips"
+colnames(earning)[2] <- "Mean_earnings_household_per_year"
+colnames(earning)[3] <- "Male_mediane_earnings"
+colnames(earning)[4] <- "Female_mediane_earnings"
+#Il faut que earning$CountyFips possede 5 chiffres significatifs 
+#pour que cela match avec usa.df donc on rajoute un 0 devant des fips a 4chiffres
+earning$CountyFips  <- str_pad(earning$CountyFips , width=5, side="left", pad="0")
+texas.dat <- join(texas.df, earning, by = "CountyFips", type = "inner")
+
+#On visualise les salaires moyens des foyer par County
+legend_title <- "Earnings in $"
+ggp3 <- ggplot() + 
+    geom_polygon(data = texas.dat, aes(x = long, y = lat, group = group, fill = Mean_earnings_household_per_year), color = "black", size = 0.15)+
+   scale_fill_gradient(legend_title,low = "white", high = "green")+
+  ggtitle("Mean earnings household per year (2015)")
+
+ggp3
+
+```
+
+Nous avons choisi d'observer la répartition des revenues par foyer durant l'année 2015. On peut remarquer une analogie entre ce graph et celui ci-dessus concernant le contraste.  
+Un des comté où les revenues sont les plus élevés est Borden et parmi les moins élevés est Zavala.
+
+
+
+```{r}
+#On remarque sur graph ci-dessus que "Borden County" est le departement dont les revenue par foyer sont les plus elevee et de plus les habitans ont vote 90.4 pour Trump et 8,5 pour Clinton
+#Interessons nous a "Borden County":48033
+#On fera un comparatif avec "Zavalae County" qui a vote majoritairement pour #Clinton
+
+TCcounty <- texas.df[texas.df$CountyName=="zavala"| texas.df$CountyName=="borden",]
+
+ggp4 <- ggplot() + 
+    geom_polygon(data = TCcounty, aes(x = long, y = lat, group = group, fill = newColumn), color = "black", size = 0.15) +
+    geom_polygon(data = texas.df, aes(x = long, y = lat, group = group),colour = "black", fill = NA, size = 0.15)+
+  scale_fill_distiller(palette = "RdBu", breaks=c(-80,0,50),labels=c("Trump","=","Clinton"), trans = "reverse")+
+  theme_nothing(legend = TRUE) + labs(title = "2016 Texas presidential elections", fill = "")
+ggp4
+
+
+
+
+```
+
+On décide de s'intéresser à ces 2 Comté : Borden en Rouge et Zavala en Bleu.
+
+"Borden County" est le departement dont les revenue par foyer sont les plus elevee et de plus les habitans ont vote 90.4 pour Trump et 8,5 pour Clinton
+On fera un comparatif avec "Zavalae County" qui a vote majoritairement pour Clinton
+
+
+
+```{r}
+#On compare ces Borden et Zavala 
+
+#On filtre 
+BZearn <- earning[earning$CountyFips== 48033 | earning$CountyFips==48507,]
+
+
+BZdata <- data.frame(County=c("Borden","Zavala","Borden","Zavala","Borden","Zavala"),Name=c(rep("A",2),rep("B",2),rep("C",2)), Earnings=c(BZearn[1,2],c(BZearn[2,2], BZearn[1,3],BZearn[2,3], BZearn[1,4]),  BZearn[2,4]))
+
+
+pp <- ggplot(data=BZdata, aes(x=Name, y=Earnings, fill=County)) +
+  geom_bar(colour="black", stat="identity",
+             position=position_dodge(),
+             size=.3) +  # Thinner lines
+  geom_text(aes(y=Earnings, label=Earnings), vjust=1.6,  position =     position_dodge(0.9), color="white", size=3.5)+
+  xlab("A=Mean_earnings_household,  B=Male,  C=Female") + 
+  ylab("Earnings in Dollars") + # Set axis labels
+    ggtitle("Compraraison of wages per year ") +     # Set title
+    theme_bw()
+
+pp
+
+```
+
+Les revenues moyen par foyer dans le Comté de Borden est plus du double que celui de Zavala. 
+
+
+
+```{r}
+#On s'interesse a l'assurance medicale de la population par county du TEXAS
+all_insurance.dat <- read.csv("DATA/ASSURANCE_2015/ACS_15_5YR_B27001_with_ann.csv", header = T, sep = ",")
+#On elimine la 1er ligne qui contientd es caractere
+all_insurance.dat <- all_insurance.dat[-c(1),]
+
+#On selectionne les colonnes qui nous intéresse
+insurance <- all_insurance.dat[c("GEO.id2","HD01_VD10","HD01_VD11","HD01_VD13",                      "HD01_VD14","HD01_VD16","HD01_VD17","HD01_VD19","HD01_VD20","HD01_VD22","HD01_VD23","HD01_VD25","HD01_VD26","HD01_VD28","HD01_VD29","HD01_VD38","HD01_VD39","HD01_VD41","HD01_VD42","HD01_VD44","HD01_VD45","HD01_VD47","HD01_VD48","HD01_VD50","HD01_VD51","HD01_VD53","HD01_VD54","HD01_VD56","HD01_VD57") ]
+
+#On rennome les colonnes 
+colnames(insurance)[c(1:29)] <- c("CountyFips","Male_with_[18-24]", "Male_no_[18-24]", "Male_with_[25-34]", "Male_no_[25-34]", "Male_with_[35-44]", "Male_no_[35-44]", "Male_with_[45-54]", "Male_no_[45-54]","Male_with_[55-64]","Male_no_[55-64]","Male_with_[65-74]","Male_no_[65-74]", "Male_with_[>75]","Male_no_[>75]","Female_with_[18-24]", "Female_no_[18-24]", "Female_with_[25-34]", "Female_no_[25-34]", "Female_with_[35-44]", "Female_no_[35-44]", "Female_with_[45-54]", "Female_no_[45-54]","Female_with_[55-64]","Female_no_[55-64]","Female_with_[65-74]","Female_no_[65-74]", "Female_with_[>75]","Female_no_[>75]")
+
+#On fait une jointure par "CountyFips"
+usa.Fips <- usa.info[c("StateName","CountyFips","CountyName")]
+insurance <- merge.data.frame(usa.Fips, insurance,  by = "CountyFips", type = "inner")
+
+#On s'interesse que au Texas
+Texas.insurance <- insurance[insurance$StateName=="texas",]
+
+#On somme les valeur de chaque "County" pour les Hommes et les Femmes avec et sans assurance
+Texas.Male_with_ins_value <-c(sum(as.numeric(as.character(insurance[,4])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,6])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,8])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,10])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,12])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,14])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,16])),na.rm=TRUE))
+
+Texas.Female_with_ins_value <-c(sum(as.numeric(as.character(insurance[,18])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,20])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,22])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,24])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,26])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,28])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,30])),na.rm=TRUE))
+
+Texas.Male_no_ins_value <-c(sum(as.numeric(as.character(insurance[,5])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,7])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,9])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,11])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,13])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,15]),na.rm=TRUE),na.rm=TRUE),sum(as.numeric(as.character(insurance[,17])),na.rm=TRUE))
+
+Texas.Female_no_ins_value <-c(sum(as.numeric(as.character(insurance[,19])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,21])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,23])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,25])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,27])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,29])),na.rm=TRUE),sum(as.numeric(as.character(insurance[,31])),na.rm=TRUE))
+
+#On réorganise 
+M_value <-c(Texas.Male_with_ins_value,Texas.Male_no_ins_value)
+F_value <-c(Texas.Female_with_ins_value,Texas.Female_no_ins_value)
+
+#On prépare la légende Verticale
+age <- c("[18-24]", "[25-34]",  "[35-44]",  "[45-54]", "[55-64]","[65-74]", "[75>]")
+age <- rep(age,2)
+insurance_coverage <- c(rep("with_insurance",7), rep("no_insurance",7))
+Texas.all_insurance <- data.frame(age,insurance_coverage, M_value,F_value)
+
+#On prépare la legende Horizontale
+brks <- seq(-15000000, 15000000, 5000000)
+lbls = paste0(as.character(c(seq(15, 0, -5), seq(5, 15, 5))), "m")
+
+#On différencie les cas avec assurance et sans assurance
+Texas.all_insurance$M_plot_value <-c(Texas.all_insurance$M_value[1:7],-Texas.all_insurance$M_value[8:14]) 
+Texas.all_insurance$F_plot_value <-c(Texas.all_insurance$F_value[1:7],-Texas.all_insurance$F_value[8:14]) 
+
+# On plot les graphes
+gg5M <- ggplot(Texas.all_insurance, aes(x = age, y = M_plot_value, fill = insurance_coverage)) + 
+  geom_bar(stat = "identity", width = .6) +   
+scale_y_continuous(breaks = brks, labels = lbls) + # Labels
+  coord_flip() +
+labs(title="Male health insurance coverage") +
+  xlab("Age")+
+  ylab("Number of people")+
+ theme_tufte() +  # Tufte theme from ggfortify
+   theme(plot.title = element_text(hjust = .5), 
+    axis.ticks = element_blank()) +   
+   scale_fill_brewer(palette = "Dark2") 
+gg5M
+
+
+```
+
+Une des promesses majeur de D.Trump est d'abolire "l'Obamacare" qui selon lui est un gouffre financier pour le budget et inégalement répartie.
+
+Ce graph nous aide à comprendre que les personnes susceptibles à adhérer à la proposition de Trump sont les jeunes Hommes [25-34] qui sont 3 785 662 à ne pas être assuré. La plupart des personnes âgés possède une assurance santé.
+
+
+
+```{r}
+gg5F <- ggplot(Texas.all_insurance, aes(x = age, y = F_plot_value, fill = insurance_coverage)) + 
+  geom_bar(stat = "identity", width = .6) +   
+scale_y_continuous(breaks = brks, labels = lbls) + # Labels
+  coord_flip() +
+labs(title="Female health insurance coverage") +
+  xlab("Age")+
+  ylab("Number of people")+
+ theme_tufte() +  # Tufte theme from ggfortify
+   theme(plot.title = element_text(hjust = .5), 
+    axis.ticks = element_blank()) +   # Centre plot title
+   scale_fill_brewer(palette = "Dark2")  # Color palette
+gg5F
+```
+
+Le graph concernant les Femmes est très similaire à celui des Hommes.
+
+
+```{r}
+
+#On s'interesse a "population and race" par county du TEXAS
+all_pop.dat <- read.csv("DATA/POPULATION_AND_RACE_2015/ACS_15_5YR_DP05_with_ann.csv", header = T, sep = ",")
+#On elimine la 1er ligne qui contient des caractères
+all_pop.dat <- all_pop.dat[-c(1),]
+
+# One race (White, Black, Hispanic, Others)
+Population_one_race <- data.frame(as.numeric(as.character(all_pop.dat$HC01_VC49)) + as.numeric(as.character(all_pop.dat$HC01_VC50)) +
+  as.numeric(as.character(all_pop.dat$HC01_VC88))+
+  as.numeric(as.character(all_pop.dat$HC01_VC69)))
+
+
+#On selectionne les colonnes qui nous sont utiles
+all_race.dat <- all_pop.dat[c("GEO.id2","HC01_VC49","HC01_VC50","HC01_VC88","HC01_VC69")]
+
+#On renomme le nom des colonnes
+colnames(all_race.dat)<-c("CountyFips","White","Black","Hispanic","Others")
+all_race.dat$Population_one_race <- Population_one_race
+colnames(all_race.dat[,6]) <- "Population_one_race"
+
+#On veut des colonnes au format Numéric
+all_race.dat$CountyFips <- as.numeric(as.character(all_race.dat$CountyFips))
+all_race.dat$White <- as.numeric(as.character(all_race.dat$White))
+all_race.dat$Black <- as.numeric(as.character(all_race.dat$Black))
+all_race.dat$Hispanic <- as.numeric(as.character(all_race.dat$Hispanic))
+all_race.dat$Others <- as.numeric(as.character(all_race.dat$Others))
+
+#On calcule les %
+all_race.dat$White_plot <- (all_race.dat$White/as.numeric(as.character(all_race.dat$Population_one_race)))*100
+all_race.dat$Black_plot <- (all_race.dat$Black/as.numeric(as.character(all_race.dat$Population_one_race)))*100
+all_race.dat$Hisp_plot <- (all_race.dat$Hispanic/as.numeric(as.character(all_race.dat$Population_one_race)))*100
+all_race.dat$Others_plot <- (all_race.dat$Others/as.numeric(as.character(all_race.dat$Population_one_race)))*100
+
+#On fait une jointure par "CountyFips"
+texas_race.dat <- join(texas.df, all_race.dat, by = "CountyFips", type = "inner")
+
+#On visualise les salaires moyens des foyer par County
+legend_title <- "Population (%)"
+ggp6 <- ggplot() + 
+    geom_polygon(data = texas_race.dat, aes(x = long, y = lat, group = group, fill = Hisp_plot), color = "black", size = 0.15)+
+   scale_fill_gradient(legend_title,low = "white", high = "orange")+
+  ggtitle("Texas, Hispanic population (2015)")
+
+ggp6
+
+
+```
+
+La répartion de la population hispanique du Texas est représenté sur le graph ci-dessus. Les comtés proche de la frontière Mexicaine ont une population Hispanique suprérieur aux Comtés du Nord-Est.
+
+
+```{r}
+
+#On met en forme pour avoir des % de chaque colonne
+All_race_percent <- all_race.dat[7:10]
+W <- sum((All_race_percent[,1])/length((All_race_percent[,1])),na.rm=TRUE)
+B <- sum((All_race_percent[,2])/length((All_race_percent[,2])),na.rm=TRUE)
+H <- sum((All_race_percent[,3])/length((All_race_percent[,3])),na.rm=TRUE)
+O <- sum((All_race_percent[,4])/length((All_race_percent[,4])),na.rm=TRUE)
+
+Value <- c(W,B,H,O)
+Race <- c("White","Black","Hispanic","Others")
+
+Texas_percent_race <- data.frame(Race,Value)# Pour la legend
+
+# On plot
+slices <- c(Texas_percent_race$Value) # Chaque slice à une valeur
+lbls <- Race #Pour la legende
+
+pct <- round(slices/sum(slices)*100)
+lbls <- paste(lbls, pct) # ajout des %
+lbls <- paste(lbls,"%",sep="") # ajout % à la legend   
+pie(slices,labels = lbls, col=rainbow(length(lbls)),
+  	main="Texas census race population 2015")
+
+```
+
+Pour finir, la population Américo-Hispanique reste minoritaire au Texas avec une représentation de 8% de la population.
+
+
+Pour conclure ce projet nous a permis de se familiariser à R en étant autonome dans le travail. On peut continuer à comprendre cette élection en étudions d'autres horizon comme le niveau d'éducation "degree", les vétérans de guerre,etc... 
+
+
+
+
+
